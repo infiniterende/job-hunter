@@ -8,3 +8,4 @@ web/.env
 web/.env*.local
 .DS_Store
 web/lib/generated/
+.claude/
