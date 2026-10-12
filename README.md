@@ -1,11 +1,39 @@
 # Job Hunter
 
+[github.com/infiniterende/job-hunter](https://github.com/infiniterende/job-hunter)
+
 Daily ranked software-engineer job feed built from the public **Greenhouse**, **Ashby** and **Lever** job-board APIs.
 
 - **Scraper** (`scraper/`, Python): fetches every board in `scraper/companies.json`, keeps software-engineering roles posted in the last 30 days that are **NYC-based or US-remote**, scores them on NYC / Remote / Senior / **React** / **Python** / **AI**, deduplicates by source + job id, upserts into Postgres and snapshots the **top 25** for the day.
 - **Database**: Supabase Postgres. Schema in `schema.sql` (`jobs`, `daily_picks`, `applications`, `companies`). The Next.js app reads it through **Prisma 7** (`web/prisma/schema.prisma`, introspected from the live database, with the `@prisma/adapter-pg` driver).
 - **Dashboard** (`web/`, Next.js + React + Tailwind): the day's top 25 with direct application links, plus an application tracker (status, date applied, date posted, notes).
 - **Cron**: GitHub Actions runs the scraper every day at **8:00am New York time** (`.github/workflows/daily-scrape.yml`).
+
+## How it works
+
+```
+Greenhouse / Ashby / Lever APIs
+          │  scraper/scraper.py  (GitHub Actions, daily 8am ET)
+          ▼
+  filter: SWE title · posted ≤ 30 days · NYC or US-remote
+  score : NYC · Remote · Senior · React · Python · AI · freshness
+          ▼
+   Supabase Postgres  ──  jobs · daily_picks · applications
+          │  Prisma
+          ▼
+   Next.js dashboard  ──  Daily Top 25 · My Applications
+```
+
+## Repository layout
+
+| Path | Purpose |
+|---|---|
+| `scraper/scraper.py` | Fetch, filter, score, upsert, prune, snapshot daily picks |
+| `scraper/companies.json` | Board tokens to scrape (verified live with `make check-boards`) |
+| `schema.sql` | Postgres schema, idempotent |
+| `web/` | Next.js dashboard and API ([its README](web/README.md)) |
+| `.github/workflows/daily-scrape.yml` | 8am New York time cron |
+| `Makefile` | `make scrape`, `make web`, `make check-boards`, `make db-pull`, `make db-shell` |
 
 ## Setup
 
