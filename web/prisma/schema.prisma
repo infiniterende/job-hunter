@@ -1,0 +1,68 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../lib/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+model applications {
+  id         Int       @id @default(autoincrement())
+  job_id     BigInt    @unique
+  status     String    @default("applied")
+  applied_at DateTime? @db.Date
+  notes      String?
+  created_at DateTime  @default(now()) @db.Timestamptz(6)
+  updated_at DateTime  @default(now()) @db.Timestamptz(6)
+  jobs       jobs      @relation(fields: [job_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+model companies {
+  id              Int       @id @default(autoincrement())
+  name            String
+  source          String
+  board_token     String
+  active          Boolean   @default(true)
+  last_status     String?
+  last_fetched_at DateTime? @db.Timestamptz(6)
+
+  @@unique([source, board_token])
+}
+
+model daily_picks {
+  day    DateTime @db.Date
+  rank   Int
+  job_id BigInt
+  jobs   jobs     @relation(fields: [job_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@id([day, rank])
+  @@unique([day, job_id])
+}
+
+model jobs {
+  id              BigInt        @id @default(autoincrement())
+  source          String
+  external_id     String
+  company         String
+  title           String
+  location        String?
+  is_remote       Boolean       @default(false)
+  is_nyc          Boolean       @default(false)
+  url             String
+  posted_at       DateTime?     @db.Timestamptz(6)
+  first_seen_at   DateTime      @default(now()) @db.Timestamptz(6)
+  last_seen_at    DateTime      @default(now()) @db.Timestamptz(6)
+  score           Int           @default(0)
+  score_breakdown Json          @default("{}")
+  tags            String[]      @default([])
+  snippet         String?
+  applications    applications?
+  daily_picks     daily_picks[]
+
+  @@unique([source, external_id])
+  @@index([posted_at(sort: Desc)])
+  @@index([score(sort: Desc)])
+}

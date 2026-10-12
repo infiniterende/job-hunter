@@ -1,0 +1,42 @@
+name: Daily job scrape
+
+on:
+  schedule:
+    # 8:00am America/New_York. GitHub cron is UTC with no DST support, so both
+    # 12:00 UTC (EDT) and 13:00 UTC (EST) are scheduled; the gate step skips the
+    # one that is not 8am in New York.
+    - cron: "0 12 * * *"
+    - cron: "0 13 * * *"
+  workflow_dispatch:
+
+jobs:
+  scrape:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Only run at 8am New York time
+        id: gate
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] || [ "$(TZ=America/New_York date +%H)" = "08" ]; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "Not 8am in New York; skipping."; echo "run=false" >> "$GITHUB_OUTPUT"
+          fi
+      - uses: actions/checkout@v4
+        if: steps.gate.outputs.run == 'true'
+      - uses: actions/setup-python@v5
+        if: steps.gate.outputs.run == 'true'
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: scraper/requirements.txt
+      - name: Install deps
+        if: steps.gate.outputs.run == 'true'
+        run: pip install -r scraper/requirements.txt
+      - name: Scrape, rank and save daily picks to Supabase
+        if: steps.gate.outputs.run == 'true'
+        env:
+          # Repository secret: the Supabase session-mode pooler URL (port 5432).
+          DIRECT_URL: ${{ secrets.DIRECT_URL }}
+          DAILY_TOP_N: "25"
+          MAX_AGE_DAYS: "30"
+        run: python scraper/scraper.py run

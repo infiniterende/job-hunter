@@ -1,0 +1,10 @@
+.pgdata/
+.env
+scraper/.venv/
+scraper/__pycache__/
+web/node_modules/
+web/.next/
+web/.env
+web/.env*.local
+.DS_Store
+web/lib/generated/
