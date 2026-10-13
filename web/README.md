@@ -14,7 +14,11 @@ npm run dev               # http://localhost:3000
 
 | Path | Purpose |
 |---|---|
-| `app/page.tsx` | Dashboard: Daily Top 25 table and My Applications tracker |
+| `app/page.tsx` | Daily Top 100 table; the Status column saves a job to Applied jobs |
+| `app/healthcare/page.tsx` | Top 100 healthcare-tech roles, live from the `jobs` table (`/api/jobs?tag=Healthcare`) |
+| `components/JobsTable.tsx` | Company-grouped ranked table with the status column, shared by `/` and `/healthcare` |
+| `app/applied/page.tsx` | Applied jobs: status, date applied, date posted, notes, with status filters |
+| `components/ui.tsx` | Shared nav, tags, status constants, toast |
 | `app/api/jobs/route.ts` | `GET /api/jobs?day=YYYY-MM-DD` ranked picks for a day |
 | `app/api/applications/route.ts` | `GET` list, `POST` create/update an application |
 | `app/api/applications/[id]/route.ts` | `PATCH` status/date/notes, `DELETE` stop tracking |

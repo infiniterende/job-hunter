@@ -35,8 +35,9 @@ load_dotenv(HERE / ".env")
 # transaction-mode poolers do not support.
 DATABASE_URL = os.environ.get("DIRECT_URL") or os.environ.get(
     "DATABASE_URL", "postgresql://postgres@localhost:5433/job_hunter")
-DAILY_TOP_N = int(os.environ.get("DAILY_TOP_N", "25"))
+DAILY_TOP_N = int(os.environ.get("DAILY_TOP_N", "100"))
 MAX_AGE_DAYS = int(os.environ.get("MAX_AGE_DAYS", "30"))
+MAX_PER_COMPANY = int(os.environ.get("MAX_PER_COMPANY", "5"))  # keeps the top-N spread across companies
 TIMEOUT = 20
 UA = {"User-Agent": "job-hunter/1.0 (+personal job search tool)"}
 
@@ -69,12 +70,20 @@ NON_US_REMOTE = re.compile(
     r"brazil|sao paulo|mexico|argentina|israel|tel aviv|uae|dubai|africa|nigeria|kenya)\b", re.I)
 
 KEYWORDS = {
-    "react":  (re.compile(r"\b(react(\.js)?|next\.?js|typescript)\b", re.I), 15),
-    "python": (re.compile(r"\bpython\b|\b(django|fastapi|flask)\b", re.I), 15),
+    "react":  (re.compile(r"\b(react(\.js)?|next\.?js|typescript)\b", re.I), 8),
+    "python": (re.compile(r"\bpython\b|\b(django|fastapi|flask)\b", re.I), 8),
     "ai":     (re.compile(r"\b(ai|ml|machine learning|llm|llms|genai|generative|deep learning|"
-                          r"rag|agents?|openai|anthropic|transformers?|pytorch)\b", re.I), 15),
+                          r"rag|agents?|openai|anthropic|transformers?|pytorch)\b", re.I), 8),
 }
-SENIOR_RE = re.compile(r"\b(senior|sr\.?|staff|principal|lead)\b", re.I)
+# Level detection (mid-level to senior is the target band)
+SENIOR_RE   = re.compile(r"\b(senior|sr\.?|lead)\b", re.I)
+STAFF_RE    = re.compile(r"\b(staff|principal|distinguished|architect|fellow|l[6-9]|e[6-9]|ic[5-9])\b", re.I)
+JUNIOR_RE   = re.compile(r"\b(junior|jr\.?|associate|entry[- ]level|new ?grad|graduate|early career|"
+                         r"apprentice|intern|internship|university|campus|\bi\b|level ?1|l[1-3]|e[1-3]|ic[1-2])\b", re.I)
+MID_RE      = re.compile(r"\b(ii|iii|2|3|mid[- ]?level|l[4-5]|e[4-5]|ic[3-4])\b", re.I)
+SWE_TITLE   = re.compile(r"\b(software|full[- ]?stack|front[- ]?end|back[- ]?end|web|platform|product)\s+"
+                         r"(engineer|developer)\b|\bswe\b", re.I)
+COMPANY_TYPE_POINTS = {"healthcare": 25, "bigtech": 20, "startup": 15}
 
 
 def strip_html(s: str | None) -> str:
@@ -197,27 +206,46 @@ def classify_location(location: str, remote_flag, description: str) -> tuple[boo
     return is_nyc, is_remote
 
 
-def score_job(j: dict) -> tuple[int, dict, list[str]]:
+def level_of(title: str) -> str:
+    if JUNIOR_RE.search(title):
+        return "junior"
+    if STAFF_RE.search(title):
+        return "staff"
+    if SENIOR_RE.search(title):
+        return "senior"
+    return "mid"
+
+
+def score_job(j: dict, company_type: str | None) -> tuple[int, dict, list[str]]:
     title = j["title"] or ""
     text = f"{title} {j.get('description','')}"
     breakdown: dict[str, int] = {}
     tags: list[str] = []
 
+    # Location: NYC first, US-remote second, both best.
     if j["is_nyc"]:
         breakdown["nyc"] = 30; tags.append("NYC")
     if j["is_remote"]:
         breakdown["remote"] = 25 if not j["is_nyc"] else 10; tags.append("Remote")
 
-    breakdown["swe"] = 20
-    if SENIOR_RE.search(title):
-        breakdown["senior"] = 10; tags.append("Senior")
+    # Role: explicit software-engineer titles beat generic "engineer" titles.
+    breakdown["swe"] = 20 if SWE_TITLE.search(title) else 10
 
+    # Level: mid-level to senior is the target; staff+ is over-levelled.
+    lvl = level_of(title)
+    breakdown["level"] = {"senior": 25, "mid": 20, "staff": 5, "junior": 0}[lvl]
+    tags.append({"senior": "Senior", "mid": "Mid", "staff": "Staff+", "junior": "Junior"}[lvl])
+
+    # Company type: healthcare tech > big tech > startup.
+    if company_type in COMPANY_TYPE_POINTS:
+        breakdown["company"] = COMPANY_TYPE_POINTS[company_type]
+        tags.append({"healthcare": "Healthcare", "bigtech": "Big tech", "startup": "Startup"}[company_type])
+
+    # Stack keywords are a secondary signal now.
     for name, (rx, pts) in KEYWORDS.items():
-        in_title = bool(rx.search(title))
-        in_text = bool(rx.search(text))
-        if in_title:
-            breakdown[name] = pts + 10; tags.append(name)
-        elif in_text:
+        if rx.search(title):
+            breakdown[name] = pts + 4; tags.append(name)
+        elif rx.search(text):
             breakdown[name] = pts; tags.append(name)
 
     # Freshness: up to +10 for brand-new postings, decays over MAX_AGE_DAYS
@@ -233,7 +261,7 @@ def is_swe(title: str) -> bool:
 
 
 def keep(j: dict, cutoff: datetime) -> bool:
-    if not j.get("url") or not is_swe(j["title"]):
+    if not j.get("url") or not is_swe(j["title"]) or level_of(j["title"]) == "junior":
         return False
     if j["posted_at"] is None or j["posted_at"] < cutoff:
         return False
@@ -267,6 +295,12 @@ def load_companies() -> dict[str, list[str]]:
     return {k: v for k, v in data.items() if k in FETCHERS}
 
 
+def load_company_types() -> dict[str, str]:
+    """token -> healthcare | bigtech | startup"""
+    cats = json.loads((HERE / "companies.json").read_text()).get("categories", {})
+    return {t: c for c, toks in cats.items() if isinstance(toks, list) for t in toks}
+
+
 def sync_companies(conn, companies):
     for source, tokens in companies.items():
         for t in tokens:
@@ -283,19 +317,25 @@ def build_daily_picks(conn, day: date):
         """
         INSERT INTO daily_picks (day, rank, job_id)
         SELECT %s, row_number() OVER (ORDER BY score DESC, posted_at DESC, id), id
-        FROM jobs
-        WHERE posted_at >= %s
-          AND last_seen_at >= now() - interval '36 hours'   -- still listed on the board
-          AND id NOT IN (SELECT job_id FROM applications)
+        FROM (
+          SELECT id, score, posted_at,
+                 row_number() OVER (PARTITION BY lower(company) ORDER BY score DESC, posted_at DESC, id) AS n
+          FROM jobs
+          WHERE posted_at >= %s
+            AND last_seen_at >= now() - interval '36 hours'   -- still listed on the board
+            AND id NOT IN (SELECT job_id FROM applications)
+        ) ranked
+        WHERE n <= %s
         ORDER BY score DESC, posted_at DESC, id
         LIMIT %s
         """,
-        (day, cutoff, DAILY_TOP_N),
+        (day, cutoff, MAX_PER_COMPANY, DAILY_TOP_N),
     )
 
 
 def cmd_run():
     companies = load_companies()
+    company_types = load_company_types()
     cutoff = datetime.now(timezone.utc) - timedelta(days=MAX_AGE_DAYS)
     totals = {"fetched": 0, "kept": 0, "boards_ok": 0, "boards_failed": 0}
 
@@ -328,7 +368,7 @@ def cmd_run():
                         j["location"], j["remote_flag"], j["description"])
                     if not keep(j, cutoff):
                         continue
-                    j["score"], bd, tags = score_job(j)
+                    j["score"], bd, tags = score_job(j, company_types.get(token))
                     j["score_breakdown"] = Jsonb(bd)
                     j["tags"] = tags
                     j["snippet"] = (j["description"] or "")[:400]

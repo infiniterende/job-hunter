@@ -37,6 +37,7 @@ jobs:
         env:
           # Repository secret: the Supabase session-mode pooler URL (port 5432).
           DIRECT_URL: ${{ secrets.DIRECT_URL }}
-          DAILY_TOP_N: "25"
+          DAILY_TOP_N: "100"
           MAX_AGE_DAYS: "30"
+          MAX_PER_COMPANY: "5"
         run: python scraper/scraper.py run
